@@ -39,8 +39,7 @@ Install dependencies using:
 
 ```bash
 pip install tenseal
-▶️ How to Run
-```bash
+
 ```
 
 Copy code
@@ -57,27 +56,3 @@ Decrypt and display results
 
 Report approximation error introduced by CKKS
 
-🧪 Operations Supported
-Encrypted Vector Addition
-
-Encrypted Vector Subtraction
-
-Encrypted Vector Multiplication (element-wise)
-
-All operations are performed without decrypting intermediate values.
-
-🎯 Academic Relevance
-This code can serve as:
-
-A minimal research demo for FHE
-
-A base for secure federated learning aggregation
-
-A teaching example for CKKS-based encrypted computation
-
-📌 Notes
-CKKS introduces small numerical errors due to its approximate nature
-
-Cryptographic parameters are chosen for ~128-bit security
-
-Multiplicative depth is limited by coefficient modulus chain
