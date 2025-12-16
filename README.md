@@ -40,7 +40,9 @@ Install dependencies using:
 ```bash
 pip install tenseal
 ▶️ How to Run
-bash
+```bash
+```
+
 Copy code
 python fhe_vector_arithmetic_tenseal.py
 The script will:
