@@ -1,102 +1,126 @@
-
 import tenseal as ts
 import numpy as np
 import time
+import logging
 
-class SecureInferenceBenchmark:
+# Configure standard logging instead of print statements
+logging.basicConfig(level=logging.INFO, format='%(message)s')
+logger = logging.getLogger(__name__)
+
+class SecureVectorEngine:
+    """
+    Handles CKKS context initialization and secure vector operations.
+    """
+    def __init__(self, poly_modulus_degree=8192, coeff_mod_bit_sizes=None):
+        if coeff_mod_bit_sizes is None:
+            # Standard params for 128-bit security depth
+            coeff_mod_bit_sizes = [60, 40, 40, 60]
+            
+        self.poly_modulus_degree = poly_modulus_degree
+        self.coeff_mod_bit_sizes = coeff_mod_bit_sizes
+        self.context = self._build_context()
+
+    def _build_context(self):
+        try:
+            ctx = ts.context(
+                ts.SCHEME_TYPE.CKKS,
+                poly_modulus_degree=self.poly_modulus_degree,
+                coeff_mod_bit_sizes=self.coeff_mod_bit_sizes
+            )
+            ctx.global_scale = 2**40
+            ctx.generate_galois_keys()
+            return ctx
+        except Exception as e:
+            logger.error(f"Failed to initialize TenSEAL context: {e}")
+            raise
+
+    def get_max_slots(self):
+        return self.context.max_slots()
+
+    def encrypt(self, vector):
+        return ts.ckks_vector(self.context, vector)
+
+class BenchmarkRunner:
     def __init__(self, vector_size=784):
-        """
-        Initialize the HE Context.
-        vector_size: 784 corresponds to a flattened 28x28 MedMNIST image.
-        """
         self.vector_size = vector_size
-        self.ctx = self._create_context()
+        self.engine = SecureVectorEngine()
         
-    def _create_context(self):
-        """
-        Creates a TenSEAL context optimized for arithmetic on floating point numbers (CKKS).
-        - poly_modulus_degree=8192: Standard security (approx 128-bit).
-        - coeff_mod_bit_sizes: Defines the noise budget for multiplications.
-        """
-        print(f"[Init] Initializing TenSEAL Context (CKKS Scheme)...")
-        context = ts.context(
-            ts.SCHEME_TYPE.CKKS,
-            poly_modulus_degree=8192,
-            coeff_mod_bit_sizes=[60, 40, 40, 60]
-        )
-        context.global_scale = 2**40
-        context.generate_galois_keys()
-        print(f"[Init] Context Ready. Max SIMD Slots: {context.max_slots()}")
-        return context
+        # Validation: Ensure vector fits in ciphertext slots
+        max_slots = self.engine.get_max_slots()
+        if self.vector_size > max_slots:
+            raise ValueError(f"Vector size ({self.vector_size}) exceeds context max slots ({max_slots}).")
 
-    def generate_dummy_data(self):
+    def _generate_data(self):
+        # Generate normalized float data
+        np.random.seed(42) 
+        return np.random.rand(self.vector_size), np.random.rand(self.vector_size)
+
+    def _calculate_mse(self, actual, decrypted):
+        return np.mean((np.array(decrypted) - actual) ** 2)
+
+    def run(self):
+        logger.info(f"--- Running Secure Benchmark (N={self.vector_size}) ---")
         
-        #  Generates random normalized data [0,1] simulating pixel intensities
+        # Prepare Data
+        vec_a, vec_b = self._generate_data()
         
-        np.random.seed(42)  
-        # Simulating two flattened images or an image and a weight vector
-        vec_a = np.random.rand(self.vector_size)
-        vec_b = np.random.rand(self.vector_size)
-        return vec_a, vec_b
+        # 1. Encryption Phase
+        t_start = time.perf_counter()
+        enc_a = self.engine.encrypt(vec_a)
+        enc_b = self.engine.encrypt(vec_b)
+        duration_enc = time.perf_counter() - t_start
+        logger.info(f"Encryption Time:      {duration_enc:.5f}s")
 
-    def run_benchmark(self):
+        # 2. Computation Phase (Encrypted Domain)
+        # Note: In a real scenario, this happens on a server without the secret key.
+        t_start = time.perf_counter()
         
-        #Executes the Encrypt -> Compute -> Decrypt pipeline and measures metrics.
+        enc_add = enc_a + enc_b
+        enc_sub = enc_a - enc_b
+        enc_mult = enc_a * enc_b
         
-        vec_a, vec_b = self.generate_dummy_data()
+        duration_compute = time.perf_counter() - t_start
+        logger.info(f"Computation Time:     {duration_compute:.5f}s (Add, Sub, Mult)")
+
+        # 3. Decryption Phase
+        t_start = time.perf_counter()
         
-        print(f"\n[Benchmark] Starting Pipeline for Vector Size: {self.vector_size}")
-        print("-" * 60)
-
-        # 1. Encryption (Client Side)
-        t0 = time.time()
-        enc_a = ts.ckks_vector(self.ctx, vec_a)
-        enc_b = ts.ckks_vector(self.ctx, vec_b)
-        t_enc = time.time() - t0
-        print(f"1. Encryption Time:       {t_enc:.4f} sec")
-
-        # 2. Computation (Server Side)
-        # Simulating a linear layer operation (Dot product approximation via element-wise mult + sum)
-        t0 = time.time()
-        enc_sum = enc_a + enc_b
-        enc_prod = enc_a * enc_b
-        t_ops = time.time() - t0
-        print(f"2. Computation Time:      {t_ops:.4f} sec (Add + Mult)")
-
-        # 3. Decryption (Client Side)
-        t0 = time.time()
-        dec_sum = enc_sum.decrypt()
-        dec_prod = enc_prod.decrypt()
-        t_dec = time.time() - t0
-        print(f"3. Decryption Time:       {t_dec:.4f} sec")
-
-        # 4. Accuracy Verification (MSE)
-        self._verify_accuracy(vec_a, vec_b, dec_sum, dec_prod)
-
-    def _verify_accuracy(self, vec_a, vec_b, dec_sum, dec_prod):
+        dec_add = enc_add.decrypt()
+        dec_sub = enc_sub.decrypt()
+        dec_mult = enc_mult.decrypt()
         
-    # Compares encrypted results against plaintext ground truth.
-    
+        duration_dec = time.perf_counter() - t_start
+        logger.info(f"Decryption Time:      {duration_dec:.5f}s")
+
+        # 4. Accuracy Verification
+        self._verify_results(vec_a, vec_b, dec_add, dec_sub, dec_mult)
+
+    def _verify_results(self, vec_a, vec_b, dec_add, dec_sub, dec_mult):
         # Ground Truth
-        true_sum = vec_a + vec_b
-        true_prod = vec_a * vec_b
+        true_add = vec_a + vec_b
+        true_sub = vec_a - vec_b
+        true_mult = vec_a * vec_b
 
-        # Mean Squared Error
-        mse_sum = np.mean((np.array(dec_sum) - true_sum) ** 2)
-        mse_prod = np.mean((np.array(dec_prod) - true_prod) ** 2)
+        # Error Metrics
+        mse_add = self._calculate_mse(true_add, dec_add)
+        mse_sub = self._calculate_mse(true_sub, dec_sub)
+        mse_mult = self._calculate_mse(true_mult, dec_mult)
 
-        print("-" * 60)
-        print("ACCURACY REPORT (Noise Analysis)")
-        print(f"MSE (Addition):       {mse_sum:.10f}")
-        print(f"MSE (Multiplication): {mse_prod:.10f}")
+        logger.info(f"\n--- Precision Report (MSE) ---")
+        logger.info(f"Addition Error:       {mse_add:.5e}")
+        logger.info(f"Subtraction Error:    {mse_sub:.5e}")
+        logger.info(f"Multiplication Error: {mse_mult:.5e}")
 
-        if mse_prod < 1e-5:
-            print(">> STATUS: PASSED. Noise is within acceptable limits for ML.")
+        # Validation Threshold (1e-5 is standard for CKKS ML applications)
+        if mse_mult < 1e-5:
+            logger.info(">> Validation: PASSED")
         else:
-            print(">> STATUS: WARNING. High noise detected. Check bit_sizes.")
-        print("-" * 60)
+            logger.warning(">> Validation: FAILED (High Noise Detected)")
 
 if __name__ == "__main__":
-    # 784 represents a flattened 28x28 MedMNIST image
-    benchmark = SecureInferenceBenchmark(vector_size=784)
-    benchmark.run_benchmark()
+    try:
+        # Vector size 784 chosen for compatibility with standard ML datasets (e.g., MNIST)
+        runner = BenchmarkRunner(vector_size=784)
+        runner.run()
+    except Exception as e:
+        logger.critical(f"Benchmark failed: {e}")
