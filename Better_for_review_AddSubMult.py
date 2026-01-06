@@ -3,7 +3,6 @@ import numpy as np
 import time
 import logging
 
-# Configure standard logging instead of print statements
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
@@ -13,7 +12,6 @@ class SecureVectorEngine:
     """
     def __init__(self, poly_modulus_degree=8192, coeff_mod_bit_sizes=None):
         if coeff_mod_bit_sizes is None:
-            # Standard params for 128-bit security depth
             coeff_mod_bit_sizes = [60, 40, 40, 60]
             
         self.poly_modulus_degree = poly_modulus_degree
@@ -45,7 +43,6 @@ class BenchmarkRunner:
         self.vector_size = vector_size
         self.engine = SecureVectorEngine()
         
-        # Validation: Ensure vector fits in ciphertext slots
         max_slots = self.engine.get_max_slots()
         if self.vector_size > max_slots:
             raise ValueError(f"Vector size ({self.vector_size}) exceeds context max slots ({max_slots}).")
@@ -64,15 +61,14 @@ class BenchmarkRunner:
         # Prepare Data
         vec_a, vec_b = self._generate_data()
         
-        # 1. Encryption Phase
+        # SOME FIXES TO BE MADE HERE ASK THE PROFESSOR
         t_start = time.perf_counter()
         enc_a = self.engine.encrypt(vec_a)
         enc_b = self.engine.encrypt(vec_b)
         duration_enc = time.perf_counter() - t_start
         logger.info(f"Encryption Time:      {duration_enc:.5f}s")
 
-        # 2. Computation Phase (Encrypted Domain)
-        # Note: In a real scenario, this happens on a server without the secret key.
+    
         t_start = time.perf_counter()
         
         enc_add = enc_a + enc_b
@@ -82,7 +78,7 @@ class BenchmarkRunner:
         duration_compute = time.perf_counter() - t_start
         logger.info(f"Computation Time:     {duration_compute:.5f}s (Add, Sub, Mult)")
 
-        # 3. Decryption Phase
+        #Decryption
         t_start = time.perf_counter()
         
         dec_add = enc_add.decrypt()
@@ -92,11 +88,10 @@ class BenchmarkRunner:
         duration_dec = time.perf_counter() - t_start
         logger.info(f"Decryption Time:      {duration_dec:.5f}s")
 
-        # 4. Accuracy Verification
+        #Accuracy Veification
         self._verify_results(vec_a, vec_b, dec_add, dec_sub, dec_mult)
 
     def _verify_results(self, vec_a, vec_b, dec_add, dec_sub, dec_mult):
-        # Ground Truth
         true_add = vec_a + vec_b
         true_sub = vec_a - vec_b
         true_mult = vec_a * vec_b
@@ -111,7 +106,7 @@ class BenchmarkRunner:
         logger.info(f"Subtraction Error:    {mse_sub:.5e}")
         logger.info(f"Multiplication Error: {mse_mult:.5e}")
 
-        # Validation Threshold (1e-5 is standard for CKKS ML applications)
+        #Validation Threshold
         if mse_mult < 1e-5:
             logger.info(">> Validation: PASSED")
         else:
@@ -119,7 +114,6 @@ class BenchmarkRunner:
 
 if __name__ == "__main__":
     try:
-        # Vector size 784 chosen for compatibility with standard ML datasets (e.g., MNIST)
         runner = BenchmarkRunner(vector_size=784)
         runner.run()
     except Exception as e:
